@@ -15,8 +15,6 @@ contract MultiTokenFaucet {
     address public owner;
     uint256 public faucetAmount; // The amount of each token to distribute
     address[] public tokenAddresses;
-    uint256 public gasLimit = 50000; // Gas limit per token transfer
-    uint256 public gasPrice = 3 gwei; // Default gas price
     uint256 public constant MAX_TOKENS = 10;
 
     // Struct to store information about each token
@@ -86,14 +84,6 @@ contract MultiTokenFaucet {
         emit ETHDeposited(msg.value);
     }
 
-    function setGasParameters(
-        uint256 _gasLimit,
-        uint256 _gasPrice
-    ) external onlyOwner {
-        gasLimit = _gasLimit;
-        gasPrice = _gasPrice;
-    }
-
     // Deposit tokens into the faucet contract and add it to the token list
     function depositTokens(
         address tokenAddress,
@@ -155,17 +145,6 @@ contract MultiTokenFaucet {
             "Cooldown period not yet passed"
         );
 
-        // Calculate required ETH for gas
-        uint256 totalGasNeeded = gasLimit * gasPrice * tokenAddresses.length;
-        require(
-            address(this).balance >= totalGasNeeded,
-            "Insufficient ETH for gas"
-        );
-
-        // Initial ETH transfer
-        (bool initialTransfer, ) = recipient.call{value: totalGasNeeded}("");
-        require(initialTransfer, "Failed to send initial ETH for gas");
-
         // Update state first
         hasReceived[recipient] = true;
         lastClaimTime[recipient] = block.timestamp;
@@ -178,13 +157,7 @@ contract MultiTokenFaucet {
             TokenInfo storage tokenInfo = tokens[tokenAddress];
             uint256 balance = tokenInfo.token.balanceOf(address(this));
 
-            if (balance > 0) {
-                // Send ETH for gas first
-                (bool gasTransfer, ) = recipient.call{
-                    value: gasLimit * gasPrice
-                }("");
-                require(gasTransfer, "Failed to send gas ETH");
-
+            if (balance > 0 && balance >= 5 ether) {
                 require(
                     tokenInfo.token.transfer(recipient, faucetAmount),
                     "Token transfer failed"
