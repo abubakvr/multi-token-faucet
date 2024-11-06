@@ -13,13 +13,13 @@ interface IERC20 {
 
 contract MultiTokenFaucet {
     address public owner;
-    uint256 public faucetAmount; // The amount of each token to distribute
     address[] public tokenAddresses;
     uint256 public constant MAX_TOKENS = 10;
 
     // Struct to store information about each token
     struct TokenInfo {
         IERC20 token;
+        uint256 faucetAmount; // The amount of each token to distribute
     }
 
     // Mapping of token addresses to their info
@@ -64,14 +64,9 @@ contract MultiTokenFaucet {
     // Flag to indicate if the faucet is paused
     bool public paused;
 
-    constructor(uint256 _faucetAmount, uint256 _cooldownPeriod) {
-        require(
-            _faucetAmount > 0 && _faucetAmount <= 500 * 1e18,
-            "Invalid faucet portion"
-        );
+    constructor(uint256 _cooldownPeriod) {
         require(_cooldownPeriod > 0, "Invalid cooldown period");
         owner = msg.sender;
-        faucetAmount = _faucetAmount;
         cooldownPeriod = _cooldownPeriod;
     }
 
@@ -87,7 +82,8 @@ contract MultiTokenFaucet {
     // Deposit tokens into the faucet contract and add it to the token list
     function depositTokens(
         address tokenAddress,
-        uint256 amount
+        uint256 amount,
+        uint256 faucetAmount
     ) external onlyOwner {
         require(tokenAddress != address(0), "Zero address not allowed");
         require(tokenAddresses.length < MAX_TOKENS, "Too many tokens");
@@ -107,7 +103,10 @@ contract MultiTokenFaucet {
         );
 
         // Add token to the list
-        tokens[tokenAddress] = TokenInfo({token: IERC20(tokenAddress)});
+        tokens[tokenAddress] = TokenInfo({
+            token: IERC20(tokenAddress),
+            faucetAmount: faucetAmount
+        });
         tokenAddresses.push(tokenAddress);
         emit TokenAdded(tokenAddress);
         emit TokensDeposited(tokenAddress, amount);
@@ -157,12 +156,12 @@ contract MultiTokenFaucet {
             TokenInfo storage tokenInfo = tokens[tokenAddress];
             uint256 balance = tokenInfo.token.balanceOf(address(this));
 
-            if (balance > 0 && balance >= 5 ether) {
+            if (balance >= tokenInfo.faucetAmount) {
                 require(
-                    tokenInfo.token.transfer(recipient, faucetAmount),
-                    "Token transfer failed"
+                    tokenInfo.token.transfer(recipient, tokenInfo.faucetAmount),
+                    "Token transfer failed. Not enough balance"
                 );
-                totalAmount += faucetAmount;
+                totalAmount += tokenInfo.faucetAmount;
             }
         }
 
@@ -215,14 +214,5 @@ contract MultiTokenFaucet {
         (bool success, ) = owner.call{value: amount}("");
         require(success, "ETH withdrawal failed");
         emit ETHWithdrawn(amount);
-    }
-
-    // Function to edit the faucet amount
-    function setFaucetAmount(uint256 _faucetAmount) external onlyOwner {
-        require(
-            _faucetAmount > 0 && _faucetAmount <= 500 * 1e18,
-            "Invalid faucet portion"
-        );
-        faucetAmount = _faucetAmount;
     }
 }
