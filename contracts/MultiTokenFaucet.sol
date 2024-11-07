@@ -14,7 +14,10 @@ interface IERC20 {
 contract MultiTokenFaucet {
     address public owner;
     address[] public tokenAddresses;
-    uint256 public constant MAX_TOKENS = 10;
+    uint256 public constant MAX_TOKENS = 15;
+    address public constant ETH_ADDRESS =
+        0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
+    uint256 public constant ETH_FAUCET_AMOUNT = 0.01 ether;
 
     // Struct to store information about each token
     struct TokenInfo {
@@ -27,12 +30,6 @@ contract MultiTokenFaucet {
 
     // Mapping to track if an address has received tokens
     mapping(address => bool) public hasReceived;
-
-    // Cooldown period in seconds
-    uint256 public cooldownPeriod;
-
-    // Mapping to track last claim time for each user
-    mapping(address => uint256) public lastClaimTime;
 
     // Event for token addition
     event TokenAdded(address indexed tokenAddress);
@@ -64,10 +61,16 @@ contract MultiTokenFaucet {
     // Flag to indicate if the faucet is paused
     bool public paused;
 
-    constructor(uint256 _cooldownPeriod) {
-        require(_cooldownPeriod > 0, "Invalid cooldown period");
+    constructor() {
         owner = msg.sender;
-        cooldownPeriod = _cooldownPeriod;
+
+        // Add ETH to tokens list automatically
+        tokens[ETH_ADDRESS] = TokenInfo({
+            token: IERC20(address(0)), // dummy value for ETH
+            faucetAmount: ETH_FAUCET_AMOUNT
+        });
+        tokenAddresses.push(ETH_ADDRESS);
+        emit TokenAdded(ETH_ADDRESS);
     }
 
     modifier onlyOwner() {
@@ -78,6 +81,9 @@ contract MultiTokenFaucet {
     receive() external payable {
         emit ETHDeposited(msg.value);
     }
+
+    // Fallback function is called when msg.data is not empty
+    fallback() external payable {}
 
     // Deposit tokens into the faucet contract and add it to the token list
     function depositTokens(
@@ -138,40 +144,42 @@ contract MultiTokenFaucet {
     function requestTokens(address recipient) external {
         require(!paused, "Faucet is paused");
         require(recipient != address(0), "Invalid recipient address");
-        require(
-            !hasReceived[recipient] ||
-                block.timestamp >= lastClaimTime[recipient] + cooldownPeriod,
-            "Cooldown period not yet passed"
-        );
+        require(!hasReceived[recipient], "Tokens can only be requested once");
 
         // Update state first
         hasReceived[recipient] = true;
-        lastClaimTime[recipient] = block.timestamp;
-
         uint256 totalAmount = 0;
 
         // Perform transfers after state updates
         for (uint i = 0; i < tokenAddresses.length; i++) {
             address tokenAddress = tokenAddresses[i];
             TokenInfo storage tokenInfo = tokens[tokenAddress];
-            uint256 balance = tokenInfo.token.balanceOf(address(this));
 
-            if (balance >= tokenInfo.faucetAmount) {
-                require(
-                    tokenInfo.token.transfer(recipient, tokenInfo.faucetAmount),
-                    "Token transfer failed. Not enough balance"
-                );
-                totalAmount += tokenInfo.faucetAmount;
+            if (tokenAddress == ETH_ADDRESS) {
+                uint256 ethBalance = address(this).balance;
+                if (ethBalance >= tokenInfo.faucetAmount) {
+                    (bool success, ) = payable(recipient).call{
+                        value: tokenInfo.faucetAmount
+                    }("");
+                    require(success, "ETH transfer failed");
+                    totalAmount += tokenInfo.faucetAmount;
+                }
+            } else {
+                uint256 balance = tokenInfo.token.balanceOf(address(this));
+                if (balance >= tokenInfo.faucetAmount) {
+                    require(
+                        tokenInfo.token.transfer(
+                            recipient,
+                            tokenInfo.faucetAmount
+                        ),
+                        "Token transfer failed"
+                    );
+                    totalAmount += tokenInfo.faucetAmount;
+                }
             }
         }
 
         emit TokensRequested(recipient, totalAmount);
-    }
-
-    // Reset a user's hasReceived status
-    function resetHasReceived(address user) external onlyOwner {
-        hasReceived[user] = false;
-        emit HasReceivedReset(user);
     }
 
     // Withdraw tokens by owner if needed

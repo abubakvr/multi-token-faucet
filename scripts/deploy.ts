@@ -2,8 +2,6 @@ const hre = require("hardhat");
 const { ethers } = require("hardhat");
 
 async function main() {
-  const cooldownPeriod = 3600; // 1 hour cooldown period
-
   // Get the contract factory
   const UniformMultiTokenFaucet = await hre.ethers.getContractFactory(
     "MultiTokenFaucet"
@@ -18,7 +16,7 @@ async function main() {
   );
 
   // Deploy the contract with the faucet portion and cooldown period
-  const faucet = await UniformMultiTokenFaucet.deploy(cooldownPeriod);
+  const faucet = await UniformMultiTokenFaucet.deploy();
 
   // Wait for deployment to finish
   await faucet.waitForDeployment();
