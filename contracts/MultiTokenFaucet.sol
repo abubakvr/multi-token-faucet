@@ -1,18 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-interface IERC20 {
-    function transfer(address to, uint256 amount) external returns (bool);
-    function transferFrom(
-        address from,
-        address to,
-        uint256 amount
-    ) external returns (bool);
-    function balanceOf(address account) external view returns (uint256);
-}
+import {IERC20} from "./IERC20.sol";
 
 contract MultiTokenFaucet {
     address public owner;
+    address[] public allUsers;
     address[] public tokenAddresses;
     uint256 public constant MAX_TOKENS = 15;
     address public constant ETH_ADDRESS =
@@ -23,6 +16,11 @@ contract MultiTokenFaucet {
     struct TokenInfo {
         IERC20 token;
         uint256 faucetAmount; // The amount of each token to distribute
+    }
+
+    struct UserScore {
+        address user;
+        uint256 score;
     }
 
     // Mapping of token addresses to their info
@@ -45,9 +43,6 @@ contract MultiTokenFaucet {
 
     // Event for token withdrawal
     event TokensWithdrawn(address indexed tokenAddress, uint256 amount);
-
-    // Event for user's hasReceived status reset
-    event HasReceivedReset(address indexed user);
 
     // Event for faucet paused
     event FaucetPaused();
@@ -148,6 +143,7 @@ contract MultiTokenFaucet {
 
         // Update state first
         hasReceived[recipient] = true;
+        allUsers.push(recipient);
         uint256 totalAmount = 0;
 
         // Perform transfers after state updates
@@ -222,5 +218,118 @@ contract MultiTokenFaucet {
         (bool success, ) = owner.call{value: amount}("");
         require(success, "ETH withdrawal failed");
         emit ETHWithdrawn(amount);
+    }
+
+    function getAllUsersScores(
+        address[] calldata tokenAddressesToCheck
+    ) external view returns (UserScore[] memory) {
+        require(
+            tokenAddressesToCheck.length <= MAX_TOKENS,
+            "Too many tokens to check"
+        );
+
+        UserScore[] memory results = new UserScore[](allUsers.length);
+
+        for (uint256 i = 0; i < allUsers.length; i++) {
+            address user = allUsers[i];
+            uint256 totalScore = user.balance; // Include ETH balance
+
+            for (uint256 j = 0; j < tokenAddressesToCheck.length; j++) {
+                address tokenAddr = tokenAddressesToCheck[j];
+                if (tokenAddr == ETH_ADDRESS) {
+                    continue; // Skip ETH as we already added it
+                }
+
+                try IERC20(tokenAddr).balanceOf(user) returns (
+                    uint256 balance
+                ) {
+                    try IERC20(tokenAddr).decimals() returns (
+                        uint8 tokenDecimals
+                    ) {
+                        // Normalize to 18 decimals
+                        if (tokenDecimals < 18) {
+                            balance = balance * 10 ** (18 - tokenDecimals);
+                        } else if (tokenDecimals > 18) {
+                            balance = balance / 10 ** (tokenDecimals - 18);
+                        }
+
+                        totalScore += balance;
+                    } catch {
+                        continue; // Skip if decimals() call fails
+                    }
+                } catch {
+                    continue; // Skip if balanceOf() call fails
+                }
+            }
+
+            results[i] = UserScore({user: user, score: totalScore});
+        }
+
+        return results;
+    }
+
+    function getUserScoresPaginated(
+        address[] calldata tokenAddressesToCheck,
+        uint256 startIndex,
+        uint256 pageSize
+    ) external view returns (UserScore[] memory) {
+        require(startIndex < allUsers.length, "Start index out of bounds");
+        require(pageSize > 0, "Page size must be positive");
+        require(
+            tokenAddressesToCheck.length <= MAX_TOKENS,
+            "Too many tokens to check"
+        );
+
+        uint256 endIndex = startIndex + pageSize;
+        if (endIndex > allUsers.length) {
+            endIndex = allUsers.length;
+        }
+        uint256 resultSize = endIndex - startIndex;
+
+        UserScore[] memory results = new UserScore[](resultSize);
+
+        for (uint256 i = startIndex; i < endIndex; i++) {
+            address user = allUsers[i];
+            uint256 totalScore = user.balance; // Include ETH balance
+
+            for (uint256 j = 0; j < tokenAddressesToCheck.length; j++) {
+                address tokenAddr = tokenAddressesToCheck[j];
+                if (tokenAddr == ETH_ADDRESS) {
+                    continue; // Skip ETH as we already added it
+                }
+
+                try IERC20(tokenAddr).balanceOf(user) returns (
+                    uint256 balance
+                ) {
+                    try IERC20(tokenAddr).decimals() returns (
+                        uint8 tokenDecimals
+                    ) {
+                        if (tokenDecimals < 18) {
+                            balance = balance * 10 ** (18 - tokenDecimals);
+                        } else if (tokenDecimals > 18) {
+                            balance = balance / 10 ** (tokenDecimals - 18);
+                        }
+
+                        totalScore += balance;
+                    } catch {
+                        continue;
+                    }
+                } catch {
+                    continue;
+                }
+            }
+
+            results[i - startIndex] = UserScore({
+                user: user,
+                score: totalScore
+            });
+        }
+
+        return results;
+    }
+
+    // Utility function to get total number of users
+    function getUserCount() external view returns (uint256) {
+        return allUsers.length;
     }
 }
