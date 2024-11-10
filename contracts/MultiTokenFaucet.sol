@@ -232,7 +232,8 @@ contract MultiTokenFaucet {
 
         for (uint256 i = 0; i < allUsers.length; i++) {
             address user = allUsers[i];
-            uint256 totalScore = user.balance; // Include ETH balance
+            // uint256 totalScore = user.balance / 1 ether; // Convert ETH to whole units
+            uint256 totalScore = 0;
 
             for (uint256 j = 0; j < tokenAddressesToCheck.length; j++) {
                 address tokenAddr = tokenAddressesToCheck[j];
@@ -246,13 +247,8 @@ contract MultiTokenFaucet {
                     try IERC20(tokenAddr).decimals() returns (
                         uint8 tokenDecimals
                     ) {
-                        // Normalize to 18 decimals
-                        if (tokenDecimals < 18) {
-                            balance = balance * 10 ** (18 - tokenDecimals);
-                        } else if (tokenDecimals > 18) {
-                            balance = balance / 10 ** (tokenDecimals - 18);
-                        }
-
+                        // Convert to whole units by dividing by the token's decimal places
+                        balance = balance / 10 ** tokenDecimals;
                         totalScore += balance;
                     } catch {
                         continue; // Skip if decimals() call fails
@@ -290,7 +286,8 @@ contract MultiTokenFaucet {
 
         for (uint256 i = startIndex; i < endIndex; i++) {
             address user = allUsers[i];
-            uint256 totalScore = user.balance; // Include ETH balance
+            // uint256 totalScore = user.balance / 1 ether; // Convert ETH to whole units
+            uint256 totalScore = 0;
 
             for (uint256 j = 0; j < tokenAddressesToCheck.length; j++) {
                 address tokenAddr = tokenAddressesToCheck[j];
@@ -304,18 +301,14 @@ contract MultiTokenFaucet {
                     try IERC20(tokenAddr).decimals() returns (
                         uint8 tokenDecimals
                     ) {
-                        if (tokenDecimals < 18) {
-                            balance = balance * 10 ** (18 - tokenDecimals);
-                        } else if (tokenDecimals > 18) {
-                            balance = balance / 10 ** (tokenDecimals - 18);
-                        }
-
+                        // Convert to whole units by dividing by the token's decimal places
+                        balance = balance / 10 ** tokenDecimals;
                         totalScore += balance;
                     } catch {
-                        continue;
+                        continue; // Skip if decimals() call fails
                     }
                 } catch {
-                    continue;
+                    continue; // Skip if balanceOf() call fails
                 }
             }
 
