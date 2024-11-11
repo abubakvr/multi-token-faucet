@@ -3,7 +3,7 @@ const { ethers } = require("hardhat");
 
 async function main() {
   // Get the contract factory
-  const UniformMultiTokenFaucet = await hre.ethers.getContractFactory(
+  const MultiTokenFaucet = await hre.ethers.getContractFactory(
     "MultiTokenFaucet"
   );
 
@@ -16,7 +16,7 @@ async function main() {
   );
 
   // Deploy the contract with the faucet portion and cooldown period
-  const faucet = await UniformMultiTokenFaucet.deploy();
+  const faucet = await MultiTokenFaucet.deploy();
 
   // Wait for deployment to finish
   await faucet.waitForDeployment();
@@ -24,7 +24,7 @@ async function main() {
   // Get the contract address using getAddress()
   const faucetAddress = await faucet.getAddress();
 
-  console.log("UniformMultiTokenFaucet deployed to:", faucetAddress);
+  console.log("MultiTokenFaucet deployed to:", faucetAddress);
 }
 
 main().catch((error) => {

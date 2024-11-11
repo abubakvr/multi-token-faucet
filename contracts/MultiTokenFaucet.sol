@@ -2,6 +2,7 @@
 pragma solidity ^0.8.27;
 
 import {IERC20} from "./IERC20.sol";
+import {IPriceFeed} from "./IPriceFeed.sol";
 
 contract MultiTokenFaucet {
     address public owner;
@@ -16,6 +17,11 @@ contract MultiTokenFaucet {
     struct TokenInfo {
         IERC20 token;
         uint256 faucetAmount; // The amount of each token to distribute
+    }
+
+    struct TokensToCheck {
+        address addressToCheck;
+        address priceFeed;
     }
 
     struct UserScore {
@@ -221,7 +227,7 @@ contract MultiTokenFaucet {
     }
 
     function getAllUsersScores(
-        address[] calldata tokenAddressesToCheck
+        TokensToCheck[] calldata tokenAddressesToCheck
     ) external view returns (UserScore[] memory) {
         require(
             tokenAddressesToCheck.length <= MAX_TOKENS,
@@ -232,30 +238,19 @@ contract MultiTokenFaucet {
 
         for (uint256 i = 0; i < allUsers.length; i++) {
             address user = allUsers[i];
-            // uint256 totalScore = user.balance / 1 ether; // Convert ETH to whole units
             uint256 totalScore = 0;
 
             for (uint256 j = 0; j < tokenAddressesToCheck.length; j++) {
-                address tokenAddr = tokenAddressesToCheck[j];
+                address tokenAddr = tokenAddressesToCheck[j].addressToCheck;
                 if (tokenAddr == ETH_ADDRESS) {
-                    continue; // Skip ETH as we already added it
+                    continue;
                 }
 
-                try IERC20(tokenAddr).balanceOf(user) returns (
-                    uint256 balance
-                ) {
-                    try IERC20(tokenAddr).decimals() returns (
-                        uint8 tokenDecimals
-                    ) {
-                        // Convert to whole units by dividing by the token's decimal places
-                        balance = balance / 10 ** tokenDecimals;
-                        totalScore += balance;
-                    } catch {
-                        continue; // Skip if decimals() call fails
-                    }
-                } catch {
-                    continue; // Skip if balanceOf() call fails
-                }
+                totalScore += _getTokenScore(
+                    user,
+                    tokenAddr,
+                    tokenAddressesToCheck[j].priceFeed
+                );
             }
 
             results[i] = UserScore({user: user, score: totalScore});
@@ -264,61 +259,56 @@ contract MultiTokenFaucet {
         return results;
     }
 
-    function getUserScoresPaginated(
-        address[] calldata tokenAddressesToCheck,
-        uint256 startIndex,
-        uint256 pageSize
-    ) external view returns (UserScore[] memory) {
-        require(startIndex < allUsers.length, "Start index out of bounds");
-        require(pageSize > 0, "Page size must be positive");
-        require(
-            tokenAddressesToCheck.length <= MAX_TOKENS,
-            "Too many tokens to check"
-        );
-
-        uint256 endIndex = startIndex + pageSize;
-        if (endIndex > allUsers.length) {
-            endIndex = allUsers.length;
-        }
-        uint256 resultSize = endIndex - startIndex;
-
-        UserScore[] memory results = new UserScore[](resultSize);
-
-        for (uint256 i = startIndex; i < endIndex; i++) {
-            address user = allUsers[i];
-            // uint256 totalScore = user.balance / 1 ether; // Convert ETH to whole units
-            uint256 totalScore = 0;
-
-            for (uint256 j = 0; j < tokenAddressesToCheck.length; j++) {
-                address tokenAddr = tokenAddressesToCheck[j];
-                if (tokenAddr == ETH_ADDRESS) {
-                    continue; // Skip ETH as we already added it
-                }
-
-                try IERC20(tokenAddr).balanceOf(user) returns (
-                    uint256 balance
-                ) {
-                    try IERC20(tokenAddr).decimals() returns (
-                        uint8 tokenDecimals
+    function _getTokenScore(
+        address user,
+        address tokenAddr,
+        address priceFeed
+    ) internal view returns (uint256) {
+        try IERC20(tokenAddr).balanceOf(user) returns (uint256 balance) {
+            try IERC20(tokenAddr).decimals() returns (uint8 tokenDecimals) {
+                if (priceFeed != address(0)) {
+                    try IPriceFeed(priceFeed).readPrice(tokenAddr, 0) returns (
+                        int256 tokenPrice,
+                        uint256 _timeStamp
                     ) {
-                        // Convert to whole units by dividing by the token's decimal places
-                        balance = balance / 10 ** tokenDecimals;
-                        totalScore += balance;
+                        try IPriceFeed(priceFeed).decimals() returns (
+                            uint8 priceDecimals
+                        ) {
+                            if (tokenPrice > 0) {
+                                return
+                                    _calculateTokenValue(
+                                        balance,
+                                        tokenDecimals,
+                                        tokenPrice,
+                                        priceDecimals
+                                    );
+                            }
+                        } catch {
+                            // Skip if decimal call fails
+                        }
                     } catch {
-                        continue; // Skip if decimals() call fails
+                        // Skip if price feed call fails
                     }
-                } catch {
-                    continue; // Skip if balanceOf() call fails
                 }
+            } catch {
+                // Skip if decimals() call fails
             }
-
-            results[i - startIndex] = UserScore({
-                user: user,
-                score: totalScore
-            });
+        } catch {
+            // Skip if balanceOf() call fails
         }
+        return 0;
+    }
 
-        return results;
+    function _calculateTokenValue(
+        uint256 balance,
+        uint8 tokenDecimals,
+        int256 price,
+        uint8 priceDecimals
+    ) internal pure returns (uint256) {
+        // Simply divide balance by token decimals to get the actual token amount
+        uint256 actualTokenAmount = balance / (10 ** tokenDecimals);
+        // Multiply by price and divide by price decimals to get USD value
+        return (actualTokenAmount * uint256(price)) / (10 ** priceDecimals);
     }
 
     // Utility function to get total number of users
