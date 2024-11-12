@@ -10,7 +10,7 @@ async function main() {
   const result = await faucet.getAllUsersScores(tokensToCheck);
   console.log(
     `User scores: ${result
-      .map((item) => `${item.user}: ${ethers.formatUnits(item.score, 0)}`)
+      .map((item) => `${item.user}: ${ethers.formatUnits(item.score, 18)}`)
       .join(", ")}`
   );
 }

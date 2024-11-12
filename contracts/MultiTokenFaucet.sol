@@ -3,6 +3,7 @@ pragma solidity ^0.8.27;
 
 import {IERC20} from "./IERC20.sol";
 import {IPriceFeed} from "./IPriceFeed.sol";
+import {IERC4626} from "./IERC4626.sol";
 
 contract MultiTokenFaucet {
     address public owner;
@@ -27,6 +28,12 @@ contract MultiTokenFaucet {
     struct UserScore {
         address user;
         uint256 score;
+    }
+
+    struct LpTokenInfo {
+        address lpToken;
+        address asset;
+        address priceFeed;
     }
 
     // Mapping of token addresses to their info
@@ -61,6 +68,7 @@ contract MultiTokenFaucet {
 
     // Flag to indicate if the faucet is paused
     bool public paused;
+    LpTokenInfo[] public lpTokens;
 
     constructor() {
         owner = msg.sender;
@@ -139,6 +147,25 @@ contract MultiTokenFaucet {
 
         delete tokens[tokenAddress];
         emit TokenRemoved(tokenAddress);
+    }
+
+    function addLPToken(
+        address _lpToken,
+        address _asset,
+        address _priceFeed
+    ) external onlyOwner {
+        // Check if LP token already exists by iterating through the array
+        for (uint i = 0; i < lpTokens.length; i++) {
+            require(lpTokens[i].lpToken != _lpToken, "LP Token already exists");
+        }
+
+        lpTokens.push(
+            LpTokenInfo({
+                lpToken: _lpToken,
+                asset: _asset,
+                priceFeed: _priceFeed
+            })
+        );
     }
 
     // User function to request tokens
@@ -245,13 +272,17 @@ contract MultiTokenFaucet {
                 if (tokenAddr == ETH_ADDRESS) {
                     continue;
                 }
+                uint256 balance = IERC20(tokenAddr).balanceOf(user);
 
                 totalScore += _getTokenScore(
-                    user,
+                    balance,
                     tokenAddr,
                     tokenAddressesToCheck[j].priceFeed
                 );
             }
+
+            // Add LP token scores
+            totalScore += _getLPTokenScores(user);
 
             results[i] = UserScore({user: user, score: totalScore});
         }
@@ -259,44 +290,47 @@ contract MultiTokenFaucet {
         return results;
     }
 
+    // Function to calculate LP token values
+    function _getLPTokenScores(address user) internal view returns (uint256) {
+        uint256 totalLPTokenScore = 0;
+
+        for (uint256 i = 0; i < lpTokens.length; i++) {
+            uint256 lpBalance = IERC20(lpTokens[i].lpToken).balanceOf(user);
+            if (lpBalance > 0) {
+                uint256 lpAssetValue = IERC4626(lpTokens[i].lpToken)
+                    .convertToAssets(lpBalance);
+
+                totalLPTokenScore += _getTokenScore(
+                    lpAssetValue,
+                    lpTokens[i].asset,
+                    lpTokens[i].priceFeed
+                );
+            }
+        }
+
+        return totalLPTokenScore;
+    }
+
     function _getTokenScore(
-        address user,
+        uint256 balance,
         address tokenAddr,
         address priceFeed
     ) internal view returns (uint256) {
-        try IERC20(tokenAddr).balanceOf(user) returns (uint256 balance) {
-            try IERC20(tokenAddr).decimals() returns (uint8 tokenDecimals) {
-                if (priceFeed != address(0)) {
-                    try IPriceFeed(priceFeed).readPrice(tokenAddr, 0) returns (
-                        int256 tokenPrice,
-                        uint256 _timeStamp
-                    ) {
-                        try IPriceFeed(priceFeed).decimals() returns (
-                            uint8 priceDecimals
-                        ) {
-                            if (tokenPrice > 0) {
-                                return
-                                    _calculateTokenValue(
-                                        balance,
-                                        tokenDecimals,
-                                        tokenPrice,
-                                        priceDecimals
-                                    );
-                            }
-                        } catch {
-                            // Skip if decimal call fails
-                        }
-                    } catch {
-                        // Skip if price feed call fails
-                    }
-                }
-            } catch {
-                // Skip if decimals() call fails
-            }
-        } catch {
-            // Skip if balanceOf() call fails
-        }
-        return 0;
+        if (priceFeed == address(0)) return 0;
+
+        uint8 tokenDecimals = IERC20(tokenAddr).decimals();
+        (int256 tokenPrice, ) = IPriceFeed(priceFeed).readPrice(tokenAddr, 0);
+        uint8 priceDecimals = IPriceFeed(priceFeed).decimals();
+
+        if (tokenPrice <= 0) return 0;
+
+        return
+            _calculateTokenValue(
+                balance,
+                tokenDecimals,
+                tokenPrice,
+                priceDecimals
+            );
     }
 
     function _calculateTokenValue(
@@ -305,8 +339,8 @@ contract MultiTokenFaucet {
         int256 price,
         uint8 priceDecimals
     ) internal pure returns (uint256) {
-        // Simply divide balance by token decimals to get the actual token amount
-        uint256 actualTokenAmount = balance / (10 ** tokenDecimals);
+        // Normalize to 18 decimals to get the actual token amount
+        uint256 actualTokenAmount = balance * (10 ** (18 - tokenDecimals));
         // Multiply by price and divide by price decimals to get USD value
         return (actualTokenAmount * uint256(price)) / (10 ** priceDecimals);
     }
