@@ -4,6 +4,7 @@ pragma solidity ^0.8.27;
 import {IERC20} from "./IERC20.sol";
 import {IPriceFeed} from "./IPriceFeed.sol";
 import {IERC4626} from "./IERC4626.sol";
+import {ILendingPool} from "./ILendingPool.sol";
 
 contract MultiTokenFaucet {
     address public owner;
@@ -70,8 +71,14 @@ contract MultiTokenFaucet {
     bool public paused;
     LpTokenInfo[] public lpTokens;
 
-    constructor() {
+    constructor(address[] memory initialUsers) {
         owner = msg.sender;
+
+        // Add initial users to allUsers array
+        for (uint i = 0; i < initialUsers.length; i++) {
+            require(initialUsers[i] != address(0), "Invalid user address");
+            allUsers.push(initialUsers[i]);
+        }
 
         // Add ETH to tokens list automatically
         tokens[ETH_ADDRESS] = TokenInfo({
@@ -176,7 +183,21 @@ contract MultiTokenFaucet {
 
         // Update state first
         hasReceived[recipient] = true;
-        allUsers.push(recipient);
+
+        // Check if user is already in allUsers
+        bool userExists = false;
+        for (uint i = 0; i < allUsers.length; i++) {
+            if (allUsers[i] == recipient) {
+                userExists = true;
+                break;
+            }
+        }
+
+        // Only add to allUsers if not already present
+        if (!userExists) {
+            allUsers.push(recipient);
+        }
+
         uint256 totalAmount = 0;
 
         // Perform transfers after state updates
@@ -269,11 +290,18 @@ contract MultiTokenFaucet {
 
             for (uint256 j = 0; j < tokenAddressesToCheck.length; j++) {
                 address tokenAddr = tokenAddressesToCheck[j].addressToCheck;
+                require(
+                    tokenAddr != address(0),
+                    "Token address cannot be zero"
+                );
+                require(
+                    tokenAddressesToCheck[j].priceFeed != address(0),
+                    "Price feed cannot be zero"
+                );
                 if (tokenAddr == ETH_ADDRESS) {
                     continue;
                 }
                 uint256 balance = IERC20(tokenAddr).balanceOf(user);
-
                 totalScore += _getTokenScore(
                     balance,
                     tokenAddr,
@@ -295,7 +323,18 @@ contract MultiTokenFaucet {
         uint256 totalLPTokenScore = 0;
 
         for (uint256 i = 0; i < lpTokens.length; i++) {
+            // Skip if any required addresses are zero
+            if (
+                lpTokens[i].lpToken == address(0) ||
+                lpTokens[i].asset == address(0) ||
+                lpTokens[i].priceFeed == address(0)
+            ) {
+                continue;
+            }
+
             uint256 lpBalance = IERC20(lpTokens[i].lpToken).balanceOf(user);
+
+            // Only calculate scores if user has LP tokens
             if (lpBalance > 0) {
                 uint256 lpAssetValue = IERC4626(lpTokens[i].lpToken)
                     .convertToAssets(lpBalance);
@@ -304,6 +343,11 @@ contract MultiTokenFaucet {
                     lpAssetValue,
                     lpTokens[i].asset,
                     lpTokens[i].priceFeed
+                );
+
+                totalLPTokenScore += _getCollateralDeposited(
+                    lpTokens[i].lpToken,
+                    user
                 );
             }
         }
@@ -322,8 +366,6 @@ contract MultiTokenFaucet {
         (int256 tokenPrice, ) = IPriceFeed(priceFeed).readPrice(tokenAddr, 0);
         uint8 priceDecimals = IPriceFeed(priceFeed).decimals();
 
-        if (tokenPrice <= 0) return 0;
-
         return
             _calculateTokenValue(
                 balance,
@@ -339,14 +381,43 @@ contract MultiTokenFaucet {
         int256 price,
         uint8 priceDecimals
     ) internal pure returns (uint256) {
+        require(price > 0, "Price cannot be zero or negative");
         // Normalize to 18 decimals to get the actual token amount
         uint256 actualTokenAmount = balance * (10 ** (18 - tokenDecimals));
         // Multiply by price and divide by price decimals to get USD value
         return (actualTokenAmount * uint256(price)) / (10 ** priceDecimals);
     }
 
+    function _getCollateralDeposited(
+        address pool,
+        address account
+    ) internal view returns (uint256) {
+        uint256 totalAccountCollateral = ILendingPool(pool)
+            .totalAccountCollateralValue(account);
+
+        return totalAccountCollateral;
+    }
+
     // Utility function to get total number of users
     function getUserCount() external view returns (uint256) {
         return allUsers.length;
+    }
+
+    function removeUser(address userToRemove) external onlyOwner {
+        require(userToRemove != address(0), "Invalid user address");
+
+        for (uint i = 0; i < allUsers.length; i++) {
+            if (allUsers[i] == userToRemove) {
+                // Move the last element to the position being deleted
+                allUsers[i] = allUsers[allUsers.length - 1];
+                // Remove the last element
+                allUsers.pop();
+                // Reset the hasReceived status for this user
+                hasReceived[userToRemove] = false;
+                return;
+            }
+        }
+
+        revert("User not found");
     }
 }
