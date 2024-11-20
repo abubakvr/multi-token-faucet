@@ -5,6 +5,9 @@ import {IERC20} from "./IERC20.sol";
 import {IPriceFeed} from "./IPriceFeed.sol";
 import {IERC4626} from "./IERC4626.sol";
 import {ILendingPool} from "./ILendingPool.sol";
+import {IStakingPool} from "./IStakingPool.sol";
+import {ILockingGauge} from "./ILockingGauge.sol";
+import {ICheddaPool} from "./ICheddaPool.sol";
 
 contract MultiTokenFaucet {
     address public owner;
@@ -13,6 +16,11 @@ contract MultiTokenFaucet {
     uint256 public constant MAX_TOKENS = 15;
     address public constant ETH_ADDRESS =
         0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
+    address public constant CHEDDA_TOKEN =
+        0xAB3ABb5C1B69dC4fFe6B6FA0D633DD436E1639c2;
+    address public constant CHEDDA_PRICE_FEED =
+        0x4f69E2b5c3a93F33932e0faFAb3B516510aa5ab6;
+
     uint256 public constant ETH_FAUCET_AMOUNT = 0.01 ether;
 
     // Struct to store information about each token
@@ -323,33 +331,39 @@ contract MultiTokenFaucet {
         uint256 totalLPTokenScore = 0;
 
         for (uint256 i = 0; i < lpTokens.length; i++) {
-            // Skip if any required addresses are zero
-            if (
-                lpTokens[i].lpToken == address(0) ||
-                lpTokens[i].asset == address(0) ||
-                lpTokens[i].priceFeed == address(0)
-            ) {
-                continue;
-            }
-
+            //Get user unstaked lp asset value
             uint256 lpBalance = IERC20(lpTokens[i].lpToken).balanceOf(user);
 
-            // Only calculate scores if user has LP tokens
-            if (lpBalance > 0) {
-                uint256 lpAssetValue = IERC4626(lpTokens[i].lpToken)
-                    .convertToAssets(lpBalance);
+            //Get user staked lp asset value
+            uint256 stakedLpBalance = IStakingPool(
+                ICheddaPool(lpTokens[i].lpToken).stakingPool()
+            ).stakingBalance(user);
 
-                totalLPTokenScore += _getTokenScore(
-                    lpAssetValue,
-                    lpTokens[i].asset,
-                    lpTokens[i].priceFeed
-                );
+            //Convert total lp tokens to pool asset
+            uint256 lpAssetValue = IERC4626(lpTokens[i].lpToken)
+                .convertToAssets(lpBalance);
 
-                totalLPTokenScore += _getCollateralDeposited(
-                    lpTokens[i].lpToken,
-                    user
-                );
-            }
+            uint256 stakedLpAssetValue = IERC4626(lpTokens[i].lpToken)
+                .convertToAssets(stakedLpBalance);
+
+            totalLPTokenScore += _getTokenScore(
+                lpAssetValue,
+                lpTokens[i].asset,
+                lpTokens[i].priceFeed
+            );
+
+            totalLPTokenScore += _getTokenScore(
+                stakedLpAssetValue,
+                lpTokens[i].asset,
+                lpTokens[i].priceFeed
+            );
+
+            totalLPTokenScore += _getCollateralDeposited(
+                lpTokens[i].lpToken,
+                user
+            );
+
+            totalLPTokenScore += _getLockedChedda(lpTokens[i].lpToken, user);
         }
 
         return totalLPTokenScore;
@@ -391,11 +405,33 @@ contract MultiTokenFaucet {
     function _getCollateralDeposited(
         address pool,
         address account
-    ) internal view returns (uint256) {
+    ) public view returns (uint256) {
         uint256 totalAccountCollateral = ILendingPool(pool)
             .totalAccountCollateralValue(account);
 
         return totalAccountCollateral;
+    }
+
+    function _getLockedChedda(
+        address pool,
+        address account
+    ) internal view returns (uint256) {
+        uint256 lockedChedda = ILockingGauge(ICheddaPool(pool).gauge())
+            .getLock(account)
+            .amount;
+        uint8 tokenDecimals = IERC20(CHEDDA_TOKEN).decimals();
+        (int256 tokenPrice, ) = IPriceFeed(CHEDDA_PRICE_FEED).readPrice(
+            CHEDDA_TOKEN,
+            0
+        );
+        uint8 priceDecimals = IPriceFeed(CHEDDA_PRICE_FEED).decimals();
+        return
+            _calculateTokenValue(
+                lockedChedda,
+                tokenDecimals,
+                tokenPrice,
+                priceDecimals
+            );
     }
 
     // Utility function to get total number of users
