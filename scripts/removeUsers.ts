@@ -185,9 +185,9 @@ async function main() {
     try {
       // Try to format the existing address
       const formattedAddress = ethers.getAddress(userAddress.user);
-      const tx = await faucet.requestTokens(formattedAddress);
+      const tx = await faucet.removeUser(formattedAddress);
       await tx.wait();
-      console.log(`Successfully requested tokens for ${formattedAddress}`);
+      console.log(`Successfully removed user ${formattedAddress}`);
     } catch (error) {
       console.log(`Invalid address replaced with random address: ${error}`);
     }
